@@ -1,9 +1,7 @@
 # Predictive AMR Research Pipeline
 
 > **Privacy and clinical-use notice:** This repository is intended to share the
-> reproducible analysis notebook and project description only. The `.gitignore`
-> file uses an allowlist so MIMIC-IV data, derived tables, identifiers, model
-> artifacts, reports, logs, archives, and caches are not published accidentally.
+> reproducible analysis notebook and project description only.
 > Do not add, upload, or commit PhysioNet/MIMIC-IV data or row-level outputs.
 
 This is a research-oriented machine-learning pipeline for antimicrobial
