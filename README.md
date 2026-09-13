@@ -1,60 +1,145 @@
 # Predictive AMR Research Pipeline
 
-> **Privacy and clinical-use notice:** This repository is intended to share the
-> reproducible analysis notebook and project description only.
-> Do not add, upload, or commit PhysioNet/MIMIC-IV data or row-level outputs.
+Research pipeline for estimating antimicrobial resistance (AMR) risk from
+structured clinical and microbiology features available before susceptibility
+results are known. The project includes a reproducible notebook and aggregate
+analysis artifacts for model comparison, feature selection, calibration, and
+threshold analysis.
 
-This is a research-oriented machine-learning pipeline for antimicrobial
-resistance (AMR) prediction using the MIMIC-IV microbiology dataset. The
-dataset must be obtained and used separately under the applicable PhysioNet
-data-use agreement. No patient-level data is included in this repository.
+> **Research and data-use notice**
+>
+> This repository is for research and reproducibility. Use any restricted
+> source data only through its approved access process and applicable data-use
+> terms. Do not add source records, patient identifiers, row-level predictions,
+> or other restricted data to this repository. The checked-in reports are
+> aggregate summaries intended for analysis and reporting.
+>
+> The model is not a medical device and must not be used for diagnosis,
+> treatment selection, or autonomous clinical decisions. The reported results
+> require independent validation before any prospective use.
 
-## Important methodological limitation
+## Overview
 
-The features in this version were selected **data-first**, rather than through
-established clinical or microbiology domain knowledge. The pipeline searched
-for feature subsets that maximized predictive objectives such as accuracy,
-area under the precision-recall curve (AUPRC), and area under the ROC curve
-(AUROC), with additional model and calibration metrics.
+The pipeline evaluates pre-susceptibility AMR prediction using a patient-grouped
+holdout design. It combines feature reduction, model benchmarking, probability
+calibration, confidence intervals, and clinically interpretable threshold
+operating points.
 
-That optimization target may select associations that do not represent causal,
-clinically actionable, or transportable biology. Consequently, the resulting
-feature set and reported performance must not be interpreted as a validated
-clinical decision rule. Real-world medical projects should combine domain
-expert review, prospective availability checks, leakage assessment, fairness
-and subgroup analysis, external/temporal validation, calibration, and
-prospective clinical-impact evaluation before any clinical use.
+The current output contains **355,331 rows and 136 columns** in the analyzed
+feature table. The train/test partition contains **11,412 training patients**
+and **2,853 test patients**, with **zero patient overlap**.
 
-This project is not medical advice and is not approved for diagnosis,
-treatment selection, or autonomous clinical decisions.
+## Workflow
 
-This repository contains the clinical machine learning pipeline real-time, pre-susceptibility antimicrobial resistance (AMR) risk assessment in the ICU. The framework is trained on the MIMIC-IV electronic health records database.
+1. Prepare structured clinical, microbiology, and prior-exposure features.
+2. Remove redundant or highly correlated predictors.
+3. Rank candidate predictors and evaluate feature subsets from 10 to 30 inputs.
+4. Select the parsimonious feature count using joint AUROC and PR-AUC
+   distance-to-ideal optimization.
+5. Compare linear, bagging, boosting, and ensemble models.
+6. Calibrate probabilities and evaluate discrimination, calibration, and
+   threshold-dependent performance on the held-out test partition.
 
-## Study Overview
+## Results
 
-empiric antibiotic therapy in the ICU must begin 48--72 hours before susceptibility test results are completed. Delayed active therapy leads to high septic mortality, whereas blanket administration of broad-spectrum antibiotics accelerates the emergence of multi-drug resistant organisms. 
+### Feature selection
 
-This framework resolves this dilemma by predicting patient-specific AMR risk at the precise moment a microbiology culture is ordered. The model achieves clinical-grade predictive discrimination and probability calibration using a parsimonious set of **16 feature inputs** selected through a data-driven progressive feature reduction search.
+The search evaluated 95 SHAP-ranked candidate features. The selected solution
+uses **16 features**, achieving a feature-search PR-AUC of **0.5902** and
+AUROC of **0.8547**. The selected predictors are:
 
-### Clinical Generalizability & Identifier Policy
-In contrast to prior versions of this model, all database-specific clinical codes (such as MIMIC-IV's `ab_itemid`, `org_itemid`, `spec_itemid`, and `test_itemid`) are **dropped** during preprocessing. Validation sweeps verified that using text-based clinical names (e.g. `ab_name`, `org_name`, `spec_type_desc`) results in negligible performance changes ($\Delta$AUROC < 0.002) while eliminating dependency on site-specific database dictionary schemas. This allows direct deployment across different hospitals without schema matching.
+`ab_name`, `prior_resistant_count`, `org_name`, `sex_M`, `age`,
+`spec_type_desc`, `age_x_comorbidities`, `exp_fluoroquinolone`, `icu_admission`,
+`hemoglobin_last_value`, `test_seq`, `admission_location`,
+`exp_cephalosporin`, `antibiotic_count_30d`, `icu_los_prior`, and
+`days_since_last_antibiotic`.
 
----
+### Model comparison
 
-## Technical Stack & Performance Summary
+Test-partition metrics from `model_comparison_metrics.csv` and
+`auroc_prauc_ci_95.csv`:
 
-### 1. Machine Learning Pipeline (`Untitled copy.py`)
-- **Cohort Size**: 355,331 culture-antibiotic pairs
-- **Train/Test Strategy**: Patient-grouped split (80% Train, 20% Held-out Test) with 3-fold Stratified Group K-Fold tuning. Zero patient overlap between partitions.
-- **De-duplication**: 32 collinear features ($r > 0.90$) removed.
-- **Parsimony Search**: Dual-metric Distance-to-Ideal optimization selected an optimal **22-feature** subset.
-- **Tuning**: Optuna hyperparameter optimization.
-- **Model Leaderboard (Test Partition)**:
-  - **Soft Voting Ensemble**: AUROC: **0.8560** (95% CI: 0.8529--0.8594) | PR-AUC: **0.5895** (95% CI: 0.5810--0.5981)
-  - **XGBoost (calibrated, deployed)**: AUROC: **0.8514** | PR-AUC: **0.5716** | Brier Score: **0.1035** | ECE: **0.0049**
-  - **LightGBM**: AUROC: **0.8548** (95% CI: 0.8515--0.8581) | PR-AUC: **0.5852** (95% CI: 0.5764--0.5937)
-  - **CatBoost**: AUROC: **0.8514** (95% CI: 0.8482--0.8549) | PR-AUC: **0.5805** (95% CI: 0.5721--0.5893)
-- **Calibration**: Isotonic regression (Brier: 0.1035, ECE: 0.0049).
-- **Decision Thresholds**:
-  - **Youden J (primary)**: Threshold: **0.17** | Sensitivity: **78.08%** | Specificity: **75.80%** | PPV: **40.57%** | NPV: **94.23%**
-  - **Sensitivity >= 90%**: Threshold: **0.10** | Sensitivity: **89.88%** | Specificity: **59.51%**
+| Model | AUROC | PR-AUC | Brier | ECE |
+| --- | ---: | ---: | ---: | ---: |
+| Soft Voting Ensemble | 0.8553 (0.8520-0.8588) | 0.5881 (0.5795-0.5967) | 0.1549 | 0.2010 |
+| XGBoost | 0.8549 (0.8516-0.8583) | 0.5889 (0.5805-0.5975) | 0.1529 | 0.1933 |
+| LightGBM | 0.8549 (0.8517-0.8585) | 0.5863 (0.5777-0.5949) | 0.1555 | 0.1997 |
+| CatBoost | 0.8497 (0.8463-0.8532) | 0.5744 (0.5655-0.5835) | 0.1596 | 0.2099 |
+| Random Forest | 0.7694 (0.7652-0.7739) | 0.4376 (0.4288-0.4456) | 0.1961 | 0.2605 |
+| Logistic Regression | 0.7057 (0.7004-0.7107) | 0.3403 (0.3325-0.3483) | 0.2182 | 0.3168 |
+
+The final calibrated XGBoost report records AUROC **0.8526**, PR-AUC **0.5732**,
+Brier score **0.1033**, and ECE **0.0044** at the primary threshold of **0.16**.
+
+### Calibration
+
+| Method | Brier score | ECE |
+| --- | ---: | ---: |
+| Uncalibrated | 0.1518 | 0.1917 |
+| Platt (sigmoid) | 0.1021 | 0.0179 |
+| Isotonic | 0.1007 | approximately 0.0000 |
+
+### Threshold operating points
+
+Thresholds should be selected for the intended evaluation objective rather than
+treated as universal clinical rules.
+
+| Operating point | Threshold | Sensitivity | Specificity | PPV | NPV |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Youden J | 0.16 | 79.79% | 74.17% | 39.53% | 94.55% |
+| Maximum F1 | 0.27 | 62.69% | 86.73% | 49.98% | 91.66% |
+| Sensitivity >= 70% | 0.21 | 70.98% | 81.43% | 44.71% | 92.99% |
+| Sensitivity >= 90% | 0.10 | 90.27% | 59.12% | 31.84% | 96.63% |
+| Specificity >= 90% | 0.30 | 54.58% | 90.59% | 55.10% | 90.41% |
+
+## Repository layout
+
+```text
+AMR/
+├── AMR_Prediction_Pipeline.ipynb
+├── README.md
+└── new_amr_output/
+    ├── cache/
+    ├── eda_plots/
+    ├── manuscript_figures/
+    ├── models/
+    └── reports/
+        ├── final_model_performance.csv
+        ├── model_comparison_metrics.csv
+        ├── auroc_prauc_ci_95.csv
+        ├── calibration_comparison.csv
+        ├── multi_threshold_performance.csv
+        ├── selected_features.csv
+        ├── feature_selection_summary.txt
+        └── ...
+```
+
+The `reports/` directory contains aggregate evaluation tables, feature
+lineage and selection summaries, subgroup analyses, calibration results, and
+threshold interpretations. The `models/` directory contains generated model
+artifacts when available; treat them as research artifacts and do not expose
+them as a clinical service without the required governance and validation.
+
+## Reproduction
+
+1. Obtain approved access to the source data independently.
+2. Open `AMR_Prediction_Pipeline.ipynb` in Jupyter or VS Code.
+3. Configure the local input paths and Python environment used by the notebook.
+4. Run the notebook from data preparation through report generation.
+5. Review the generated files under `new_amr_output/`.
+
+The notebook and aggregate reports are intended to make the analysis traceable;
+exact results can vary with software versions, preprocessing inputs, and
+random seeds.
+
+## Limitations
+
+- Feature selection is data-driven and may capture associations that are not
+  causal, actionable, or transportable.
+- The reported evaluation is internal held-out testing, not external or
+  temporal validation.
+- Performance metrics are sensitive to prevalence, cohort construction,
+  missingness, and threshold choice.
+- Clinical deployment would require expert review, leakage assessment,
+  prospective availability checks, subgroup and fairness analysis, external
+  validation, calibration monitoring, and clinical-impact evaluation.
